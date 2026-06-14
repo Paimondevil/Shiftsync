@@ -1,11 +1,6 @@
 # =============================================================================
 # ShiftSync — Models
 # =============================================================================
-# All models for the ShiftSync scheduling application.
-# Build order: User → ShiftType → EmployeeShiftEligibility → FixedDayOff
-#              → InviteToken → TimeOffRequest → Schedule → ScheduleShift
-#              → Notification
-# =============================================================================
 
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
@@ -17,18 +12,24 @@ from django.utils import timezone
 # ---------------------------------------------------------------------------
 
 class UserManager(BaseUserManager):
-    # TODO: implement create_user and create_superuser
-    pass
+
+    def create_user(self, email, password=None, **extra_fields):
+        if not email:
+            raise ValueError('Email is required')
+        email = self.normalize_email(email)
+        user = self.model(email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, email, password=None, **extra_fields):
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+        extra_fields.setdefault('role', 'OWNER')
+        return self.create_user(email, password, **extra_fields)
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    """
-    Custom user model.
-    Roles: OWNER, MANAGER, EMPLOYEE
-    On-call employees are regular employees with is_oncall=True.
-    Exactly one MANAGER allowed at a time (enforced in serializer/view).
-    """
-
     ROLE_OWNER = 'OWNER'
     ROLE_MANAGER = 'MANAGER'
     ROLE_EMPLOYEE = 'EMPLOYEE'
@@ -38,36 +39,20 @@ class User(AbstractBaseUser, PermissionsMixin):
         (ROLE_EMPLOYEE, 'Employee'),
     ]
 
-    SHIFTS_1 = 1
-    SHIFTS_2 = 2
-    SHIFTS_3 = 3
-    SHIFTS_4 = 4
-    SHIFTS_5 = 5
-    SHIFTS_5PLUS = 6  # stored as 6 internally to represent 5+
-    SHIFT_MAX_CHOICES = [
-        (SHIFTS_1, '1'),
-        (SHIFTS_2, '2'),
-        (SHIFTS_3, '3'),
-        (SHIFTS_4, '4'),
-        (SHIFTS_5, '5'),
-        (SHIFTS_5PLUS, '5+'),
-    ]
-
     email = models.EmailField(unique=True)
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     phone = models.CharField(max_length=20, blank=True)
     role = models.CharField(max_length=10, choices=ROLE_CHOICES, default=ROLE_EMPLOYEE)
 
-    # Scheduling settings (set by owner/manager, editable anytime)
-    is_oncall = models.BooleanField(default=False)          # Ranjeet-type on-call
-    priority_rank = models.PositiveIntegerField(default=99) # 1 = highest priority
+    is_oncall = models.BooleanField(default=False)
+    priority_rank = models.PositiveIntegerField(default=99)
     min_shifts_per_week = models.PositiveIntegerField(default=1)
-    max_shifts_per_week = models.PositiveIntegerField(default=5)  # 6 = 5+
+    max_shifts_per_week = models.PositiveIntegerField(default=5)
 
     is_active = models.BooleanField(default=True)
-    is_staff = models.BooleanField(default=False)   # Django admin access
-    is_deleted = models.BooleanField(default=False) # Soft delete flag
+    is_staff = models.BooleanField(default=False)
+    is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
     hire_date = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -89,7 +74,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     @property
     def is_max_5plus(self):
-        """True if this employee has a 5+ max (stored as 6)."""
         return self.max_shifts_per_week == 6
 
 
@@ -98,18 +82,13 @@ class User(AbstractBaseUser, PermissionsMixin):
 # ---------------------------------------------------------------------------
 
 class ShiftType(models.Model):
-    """
-    Morning: 07:00–15:00
-    Evening: 15:00–23:00
-    Night:   23:00–07:00 (next day)
-    """
     MORNING = 'MORNING'
     EVENING = 'EVENING'
     NIGHT = 'NIGHT'
     SHIFT_CHOICES = [
-        (MORNING, 'Morning (7am–3pm)'),
-        (EVENING, 'Evening (3pm–11pm)'),
-        (NIGHT, 'Night (11pm–7am)'),
+        (MORNING, 'Morning (7am-3pm)'),
+        (EVENING, 'Evening (3pm-11pm)'),
+        (NIGHT, 'Night (11pm-7am)'),
     ]
 
     name = models.CharField(max_length=10, choices=SHIFT_CHOICES, unique=True)
@@ -129,12 +108,6 @@ class ShiftType(models.Model):
 # ---------------------------------------------------------------------------
 
 class EmployeeShiftEligibility(models.Model):
-    """
-    Which shift types an employee can work, and their preference level.
-    PREFERRED → scheduled first
-    PRIORITY_1 → prefers not to, fallback
-    PRIORITY_2 → worst case, last resort before on-call
-    """
     PREFERRED = 'PREFERRED'
     PRIORITY_1 = 'PRIORITY_1'
     PRIORITY_2 = 'PRIORITY_2'
@@ -153,7 +126,7 @@ class EmployeeShiftEligibility(models.Model):
         unique_together = ('employee', 'shift_type')
 
     def __str__(self):
-        return f"{self.employee.full_name} — {self.shift_type.name} ({self.preference})"
+        return f"{self.employee.full_name} - {self.shift_type.name} ({self.preference})"
 
 
 # ---------------------------------------------------------------------------
@@ -161,20 +134,13 @@ class EmployeeShiftEligibility(models.Model):
 # ---------------------------------------------------------------------------
 
 class FixedDayOff(models.Model):
-    """
-    Recurring days of the week an employee cannot/prefers not to work.
-    Set by owner/manager only, editable anytime.
-    Priority 3 = hard block (never)
-    Priority 2 = only if absolutely no alternative
-    Priority 1 = prefers not to, but flexible
-    """
     PRIORITY_3 = 3
     PRIORITY_2 = 2
     PRIORITY_1 = 1
     PRIORITY_CHOICES = [
-        (PRIORITY_3, '3 — Never'),
-        (PRIORITY_2, '2 — Rarely (emergency only)'),
-        (PRIORITY_1, '1 — Prefer not to'),
+        (PRIORITY_3, '3 - Never'),
+        (PRIORITY_2, '2 - Rarely (emergency only)'),
+        (PRIORITY_1, '1 - Prefer not to'),
     ]
 
     SUNDAY = 0
@@ -203,7 +169,7 @@ class FixedDayOff(models.Model):
         unique_together = ('employee', 'day_of_week')
 
     def __str__(self):
-        return f"{self.employee.full_name} — {self.get_day_of_week_display()} (P{self.priority})"
+        return f"{self.employee.full_name} - {self.get_day_of_week_display()} (P{self.priority})"
 
 
 # ---------------------------------------------------------------------------
@@ -211,11 +177,6 @@ class FixedDayOff(models.Model):
 # ---------------------------------------------------------------------------
 
 class InviteToken(models.Model):
-    """
-    48-hour expiring invite link sent to new employees.
-    Once used, the token is marked used and cannot be reused.
-    Owner/manager can resend a new token if expired.
-    """
     employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='invite_tokens')
     token = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -226,7 +187,7 @@ class InviteToken(models.Model):
         db_table = 'invite_tokens'
 
     def __str__(self):
-        return f"Invite for {self.employee.email} — expires {self.expires_at}"
+        return f"Invite for {self.employee.email} - expires {self.expires_at}"
 
     @property
     def is_expired(self):
@@ -238,11 +199,6 @@ class InviteToken(models.Model):
 # ---------------------------------------------------------------------------
 
 class TimeOffRequest(models.Model):
-    """
-    Employee requests a specific date off (full day, not shift-specific).
-    Auto-approved if no coverage conflict, otherwise pending + manager notified.
-    Window closes Tuesday midnight before the generation Wednesday.
-    """
     STATUS_PENDING = 'PENDING'
     STATUS_APPROVED = 'APPROVED'
     STATUS_DENIED = 'DENIED'
@@ -253,7 +209,7 @@ class TimeOffRequest(models.Model):
     ]
 
     employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='time_off_requests')
-    date = models.DateField()  # Single day per request
+    date = models.DateField()
     reason = models.TextField(blank=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING)
     manager_note = models.TextField(blank=True)
@@ -268,7 +224,7 @@ class TimeOffRequest(models.Model):
         unique_together = ('employee', 'date')
 
     def __str__(self):
-        return f"{self.employee.full_name} — {self.date} ({self.status})"
+        return f"{self.employee.full_name} - {self.date} ({self.status})"
 
 
 # ---------------------------------------------------------------------------
@@ -276,12 +232,6 @@ class TimeOffRequest(models.Model):
 # ---------------------------------------------------------------------------
 
 class Schedule(models.Model):
-    """
-    A 2-week schedule block.
-    Generated every 2 weeks on Wednesday, covering Sunday–Saturday x2.
-    Draft → manager reviews/edits → approves → emailed to all.
-    24-hour edit window after approval, then fully locked.
-    """
     STATUS_DRAFT = 'DRAFT'
     STATUS_APPROVED = 'APPROVED'
     STATUS_LOCKED = 'LOCKED'
@@ -291,7 +241,6 @@ class Schedule(models.Model):
         (STATUS_LOCKED, 'Locked'),
     ]
 
-    # The Sunday the schedule starts from
     week_start_date = models.DateField(unique=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_DRAFT)
     created_by = models.ForeignKey(
@@ -316,11 +265,6 @@ class Schedule(models.Model):
 # ---------------------------------------------------------------------------
 
 class ScheduleShift(models.Model):
-    """
-    One shift assignment within a Schedule.
-    An employee is assigned to a shift type on a specific date.
-    is_override = True if manually set by owner/manager after generation.
-    """
     schedule = models.ForeignKey(Schedule, on_delete=models.CASCADE, related_name='shifts')
     employee = models.ForeignKey(User, on_delete=models.CASCADE, related_name='scheduled_shifts')
     shift_type = models.ForeignKey(ShiftType, on_delete=models.CASCADE)
@@ -330,10 +274,10 @@ class ScheduleShift(models.Model):
 
     class Meta:
         db_table = 'schedule_shifts'
-        unique_together = ('schedule', 'shift_type', 'date')  # 1 person per shift per day
+        unique_together = ('schedule', 'shift_type', 'date')
 
     def __str__(self):
-        return f"{self.employee.full_name} — {self.shift_type.name} on {self.date}"
+        return f"{self.employee.full_name} - {self.shift_type.name} on {self.date}"
 
 
 # ---------------------------------------------------------------------------
@@ -341,10 +285,6 @@ class ScheduleShift(models.Model):
 # ---------------------------------------------------------------------------
 
 class Notification(models.Model):
-    """
-    In-app notifications.
-    Email notifications are sent separately via emails.py.
-    """
     TYPE_TIMEOFF_AUTO_APPROVED = 'TIMEOFF_AUTO_APPROVED'
     TYPE_TIMEOFF_APPROVED = 'TIMEOFF_APPROVED'
     TYPE_TIMEOFF_DENIED = 'TIMEOFF_DENIED'
@@ -360,13 +300,13 @@ class Notification(models.Model):
         (TYPE_TIMEOFF_AUTO_APPROVED, 'Time-off auto approved'),
         (TYPE_TIMEOFF_APPROVED, 'Time-off approved'),
         (TYPE_TIMEOFF_DENIED, 'Time-off denied'),
-        (TYPE_TIMEOFF_CONFLICT, 'Time-off conflict — needs review'),
+        (TYPE_TIMEOFF_CONFLICT, 'Time-off conflict - needs review'),
         (TYPE_SCHEDULE_DRAFT, 'Schedule draft ready'),
         (TYPE_SCHEDULE_PUBLISHED, 'Schedule published'),
         (TYPE_SCHEDULE_EDITED, 'Schedule edited after publish'),
         (TYPE_UNDERSTAFFED, 'Shift understaffed warning'),
-        (TYPE_SIXTH_DAY, '6th day assignment — review needed'),
-        (TYPE_SEVENTH_DAY, '7th day assignment — confirm required'),
+        (TYPE_SIXTH_DAY, '6th day assignment - review needed'),
+        (TYPE_SEVENTH_DAY, '7th day assignment - confirm required'),
     ]
 
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
@@ -374,7 +314,6 @@ class Notification(models.Model):
     message = models.TextField()
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
-    # Optional reference to related objects
     related_schedule = models.ForeignKey(
         Schedule, on_delete=models.SET_NULL, null=True, blank=True
     )
@@ -387,4 +326,4 @@ class Notification(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.recipient.full_name} — {self.notification_type}"
+        return f"{self.recipient.full_name} - {self.notification_type}"

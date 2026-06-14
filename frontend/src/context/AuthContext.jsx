@@ -1,11 +1,5 @@
-// =============================================================================
-// ShiftSync — Auth Context
-// =============================================================================
-// Provides: currentUser, token, login(), logout(), loading
-// TODO: Implement login/logout API calls and token persistence.
-// =============================================================================
-
 import { createContext, useContext, useState, useEffect } from 'react'
+import api from '../api/axios'
 
 const AuthContext = createContext(null)
 
@@ -15,16 +9,33 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // TODO: if token exists, fetch /api/auth/me/ to restore user session
-    setLoading(false)
+    if (token) {
+      api.get('/auth/me/')
+        .then(res => setCurrentUser(res.data))
+        .catch(() => {
+          localStorage.removeItem('token')
+          setToken(null)
+          setCurrentUser(null)
+        })
+        .finally(() => setLoading(false))
+    } else {
+      setLoading(false)
+    }
   }, [token])
 
   const login = async (email, password) => {
-    // TODO: POST /api/auth/login/ → store token, set currentUser
+    const res = await api.post('/auth/login/', { email, password })
+    const { token, user } = res.data
+    localStorage.setItem('token', token)
+    setToken(token)
+    setCurrentUser(user)
+    return user
   }
 
   const logout = async () => {
-    // TODO: POST /api/auth/logout/ → clear token and currentUser
+    try {
+      await api.post('/auth/logout/')
+    } catch {}
     localStorage.removeItem('token')
     setToken(null)
     setCurrentUser(null)

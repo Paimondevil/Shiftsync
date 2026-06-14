@@ -1,13 +1,6 @@
-// =============================================================================
-// Login Page
-// =============================================================================
-// TODO: Implement email + password form that calls auth.login()
-// On success: redirect to /dashboard (employee) or /admin/dashboard (manager/owner)
-// =============================================================================
-
-import { useAuth } from '../context/AuthContext'
-import { useNavigate } from 'react-router-dom'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 
 function Login() {
   const { login } = useAuth()
@@ -15,16 +8,23 @@ function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
+    setLoading(true)
     try {
       const user = await login(email, password)
-      // TODO: redirect based on role
-      navigate('/dashboard')
+      if (user.role === 'OWNER' || user.role === 'MANAGER') {
+        navigate('/admin/dashboard')
+      } else {
+        navigate('/dashboard')
+      }
     } catch (err) {
-      setError('Invalid email or password.')
+      setError(err.response?.data?.non_field_errors?.[0] || 'Invalid email or password.')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -56,9 +56,10 @@ function Login() {
           </div>
           <button
             type="submit"
-            className="w-full bg-blue-600 text-white py-2 rounded text-sm font-medium hover:bg-blue-700"
+            disabled={loading}
+            className="w-full bg-blue-600 text-white py-2 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
           >
-            Log In
+            {loading ? 'Logging in...' : 'Log In'}
           </button>
         </form>
       </div>
