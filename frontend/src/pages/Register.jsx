@@ -1,14 +1,6 @@
-// =============================================================================
-// Register Page
-// =============================================================================
-// Accessed via invite link: /register?token=xxxx
-// Employee sets username + password only.
-// Owner/manager settings are pre-configured by owner/manager before invite was sent.
-// TODO: Implement form that reads token from URL, calls auth.register()
-// =============================================================================
-
 import { useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
+import api from '../api/axios'
 
 function Register() {
   const [searchParams] = useSearchParams()
@@ -17,11 +9,26 @@ function Register() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    // TODO: POST /api/auth/register/ with { token, username, password }
-    // On success: redirect to /login
+    setError('')
+    setLoading(true)
+    try {
+      await api.post('/auth/register/', { token, username, password })
+      navigate('/login')
+    } catch (err) {
+      const data = err.response?.data
+      if (data) {
+        const msg = Object.values(data).flat().join(' ')
+        setError(msg)
+      } else {
+        setError('Something went wrong.')
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
   if (!token) {
@@ -56,14 +63,17 @@ function Register() {
               value={password}
               onChange={e => setPassword(e.target.value)}
               className="w-full border rounded px-3 py-2 text-sm"
+              minLength={8}
               required
             />
+            <p className="text-xs text-gray-400 mt-1">Minimum 8 characters</p>
           </div>
           <button
             type="submit"
-            className="w-full bg-blue-600 text-white py-2 rounded text-sm font-medium hover:bg-blue-700"
+            disabled={loading}
+            className="w-full bg-blue-600 text-white py-2 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
           >
-            Create Account
+            {loading ? 'Creating account...' : 'Create Account'}
           </button>
         </form>
       </div>

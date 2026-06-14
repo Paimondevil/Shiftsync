@@ -94,3 +94,37 @@ def _is_night_to_morning_conflict(employee, shift_type, date_obj, night_shift_da
     TODO: implement
     """
     pass
+
+def check_timeoff_coverage(employee, date):
+    """
+    Returns True if there is a coverage conflict (manager needs to review).
+    Returns False if the request can be auto-approved.
+
+    Logic: For each shift the employee is eligible for, check if there is
+    at least 1 other eligible employee NOT already requesting that day off.
+    If any shift would have zero coverage -> conflict = True.
+    """
+    from .models import EmployeeShiftEligibility, TimeOffRequest
+
+    eligible_shifts = EmployeeShiftEligibility.objects.filter(employee=employee)
+
+    for eligibility in eligible_shifts:
+        shift_type = eligibility.shift_type
+
+        # All other employees eligible for this shift
+        other_eligible = EmployeeShiftEligibility.objects.filter(
+            shift_type=shift_type
+        ).exclude(employee=employee).values_list('employee_id', flat=True)
+
+        # How many of them already have approved or pending time-off on this date
+        others_off = TimeOffRequest.objects.filter(
+            employee_id__in=other_eligible,
+            date=date,
+            status__in=['APPROVED', 'PENDING']
+        ).count()
+
+        # If all other eligible employees are also off -> conflict
+        if others_off >= len(other_eligible):
+            return True
+
+    return False
