@@ -43,3 +43,13 @@ shiftsync/
         ├── components/  # reusable UI components
         └── pages/       # route-level pages
 ```
+
+Commands to start:
+Backend:
+cd /workspaces/Shiftsync/backend
+source venv/bin/activate
+python manage.py runserver
+
+frontend:
+cd /workspaces/Shiftsync/frontend
+npm run dev

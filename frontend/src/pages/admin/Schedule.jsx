@@ -100,7 +100,7 @@ export default function Schedule() {
   const handleGenerate = async () => {
     setGenerating(true)
     try {
-      const res = await api.post('/schedule/generate/', { week_start: formatDate(weekStart) })
+      const res = await api.post('/schedule/generate/', {})
       setSchedule(res.data.schedule)
       setWarnings(res.data.warnings || [])
       showToast('✅ Schedule generated!')
