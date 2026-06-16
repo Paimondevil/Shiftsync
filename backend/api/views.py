@@ -430,19 +430,29 @@ def schedule_generate_view(request):
     if request.user.role not in ('OWNER', 'MANAGER'):
         return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
 
-    week_start = request.data.get('week_start')
-    if not week_start:
-        return Response({'detail': 'week_start is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    from datetime import date, timedelta
+
+    # Auto-calculate next period from latest existing schedule
+    latest = Schedule.objects.order_by('-week_start_date').first()
+    if latest:
+        week_start = latest.week_start_date + timedelta(days=14)
+    else:
+        # No schedule yet — start from next Sunday
+        today = date.today()
+        days_until_sunday = (6 - today.weekday()) % 7 + 1
+        if days_until_sunday == 7:
+            days_until_sunday = 0
+        week_start = today + timedelta(days=days_until_sunday)
 
     if Schedule.objects.filter(week_start_date=week_start).exists():
-        return Response({'detail': 'A schedule for this period already exists.'}, status=status.HTTP_400_BAD_REQUEST)
-
+        return Response({'detail': f'A schedule for {week_start} already exists.'}, status=status.HTTP_400_BAD_REQUEST)
+    
     from .scheduler import generate_schedule
     from .emails import send_schedule_draft_email
     from datetime import date
 
     try:
-        result = generate_schedule(date.fromisoformat(week_start))
+        result = generate_schedule(week_start)
     except Exception as e:
         return Response({'detail': f'Schedule generation failed: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -453,7 +463,13 @@ def schedule_generate_view(request):
     )
 
     for shift_data in result['shifts']:
-        ScheduleShift.objects.create(schedule=schedule, **shift_data)
+        ScheduleShift.objects.create(
+            schedule=schedule,
+            employee_id=shift_data['employee_id'],
+            shift_type_id=shift_data['shift_type_id'],
+            date=shift_data['date'],
+            is_override=shift_data['is_override'],
+        )
 
     # Notify manager via email
     manager = User.objects.filter(role=User.ROLE_MANAGER, is_deleted=False).first()
